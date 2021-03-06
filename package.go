@@ -7,8 +7,11 @@ import (
 	"encoding/xml"
 	"hash"
 	"io"
+	"net/http"
 	"os"
 	"strings"
+
+	"github.com/dbyington/httpio"
 
 	xar "github.com/dbyington/manifestgo/goxar"
 )
@@ -58,6 +61,10 @@ func (p *Package) GetTitle() string {
 	return p.Title
 }
 
+func (p *Package) BuildManifest() (*Manifest, error) {
+	return BuildPackageManifest(p)
+}
+
 func (p *Package) AsJSON(indent int) ([]byte, error) {
 	if indent >= 0 {
 		ind := strings.Repeat(" ", indent)
@@ -65,6 +72,35 @@ func (p *Package) AsJSON(indent int) ([]byte, error) {
 	}
 
 	return json.Marshal(p)
+}
+
+func ReadPkgUrl(client *http.Client, url string) (*Package, error) {
+	r, err := httpio.NewReadAtCloser(httpio.WithClient(client), httpio.WithURL(url))
+	if err != nil {
+		return nil, err
+	}
+
+	shaSum, err := r.HashURL()
+	if err != nil {
+		return nil, err
+	}
+
+	p := &Package{
+		Hashes: []hash.Hash{shaSum},
+		Size:   r.Length(),
+		URL:    url,
+	}
+
+	x, err := xar.NewReader(r, r.Length())
+	if err != nil {
+		return nil, err
+	}
+
+	if err := p.fill(x); err != nil {
+		return nil, err
+	}
+
+	return p, nil
 }
 
 func ReadPkgFile(name string) (*Package, error) {
@@ -77,16 +113,16 @@ func ReadPkgFile(name string) (*Package, error) {
 		return nil, err
 	}
 
-	p := &Package{
-		Size: fstat.Size(),
-	}
-
 	br := bufio.NewReader(f)
-	shaSum, err := sha256SumReader(br)
+	shaSum, err := Sha256SumReader(br)
 	if err != nil {
 		return nil, err
 	}
-	p.Hashes = append(p.Hashes, shaSum)
+
+	p := &Package{
+		Hashes: []hash.Hash{shaSum},
+		Size:   fstat.Size(),
+	}
 
 	r, err := xar.NewReader(f, fstat.Size())
 	if err != nil {
@@ -100,7 +136,7 @@ func ReadPkgFile(name string) (*Package, error) {
 	return p, nil
 }
 
-func sha256SumReader(r io.Reader) (hash.Hash, error) {
+func Sha256SumReader(r io.Reader) (hash.Hash, error) {
 	shaSum := sha256.New()
 
 	buf := make([]byte, ReadSizeLimit)
@@ -113,7 +149,7 @@ func sha256SumReader(r io.Reader) (hash.Hash, error) {
 
 func (p *Package) fill(r *xar.Reader) error {
 	for _, f := range r.File {
-	    // The reader should have only collected the Distribution file but just in case...
+		// The reader should have only collected the Distribution file but just in case...
 		if f.Name != "Distribution" {
 			continue
 		}
