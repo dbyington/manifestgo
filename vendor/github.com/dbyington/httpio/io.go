@@ -11,6 +11,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 var (
@@ -134,7 +135,9 @@ func (o *Options) headURL(expectHeaders map[string]string) (int64, string, error
 		}
 	}
 
-	return head.ContentLength, head.Header.Get("Etag"), nil
+	// This is really annoying, but we have to strip the quotes around the string.
+	etag := strings.Trim(head.Header.Get("Etag"), "\"")
+	return head.ContentLength, etag, nil
 }
 
 func (o *Options) HashURL(hashSize uint) (hash.Hash, error) {
@@ -161,7 +164,7 @@ func (r *ReadAtCloser) Length() int64 {
 }
 
 func (r *ReadAtCloser) Etag() string {
-    return r.etag
+	return r.etag
 }
 
 // ReadAt satisfies the io.ReaderAt interface. It requires that
