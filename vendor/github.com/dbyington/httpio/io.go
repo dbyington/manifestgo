@@ -2,6 +2,7 @@ package httpio
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -19,13 +20,21 @@ var (
 	ErrReadFromSource        = errors.New("read from source")
 	ErrRangeReadNotSupported = errors.New("range reads not supported")
 	ErrRangeReadNotSatisfied = errors.New("range not satisfied")
+
+	ErrHeaderEtag          = errors.New("etag header differs")
+	ErrHeaderContentLength = errors.New("content length differs")
+	headerErrs             = map[string]error{
+		"Etag":           ErrHeaderEtag,
+		"Content-Length": ErrHeaderContentLength,
+	}
 )
 
 const ReadSizeLimit = 32768
 
 type Options struct {
-	client *http.Client
-	url    string
+	client        *http.Client
+	url           string
+	expectHeaders map[string]string
 }
 
 type Option func(*Options)
@@ -39,12 +48,13 @@ type ReadCloser struct {
 type ReadAtCloser struct {
 	options       *Options
 	contentLength int64
+	etag          string
 
 	cancel context.CancelFunc
 }
 
 func NewReadAtCloser(opts ...Option) (r *ReadAtCloser, err error) {
-	o := new(Options)
+	o := &Options{expectHeaders: make(map[string]string)}
 	for _, opt := range opts {
 		opt(o)
 	}
@@ -55,13 +65,14 @@ func NewReadAtCloser(opts ...Option) (r *ReadAtCloser, err error) {
 		return nil, err
 	}
 
-	contentLength, err := o.headURL()
+	contentLength, etag, err := o.headURL(o.expectHeaders)
 	if err != nil {
 		return nil, err
 	}
 
 	return &ReadAtCloser{
 		contentLength: contentLength,
+		etag:          etag,
 		options:       o,
 	}, nil
 }
@@ -75,6 +86,12 @@ func WithClient(c *http.Client) Option {
 func WithURL(url string) Option {
 	return func(o *Options) {
 		o.url = url
+	}
+}
+
+func WithExpectHeaders(e map[string]string) Option {
+	return func(o *Options) {
+		o.expectHeaders = e
 	}
 }
 
@@ -101,31 +118,42 @@ func (o *Options) validateUrl() error {
 	return nil
 }
 
-func (o *Options) headURL() (int64, error) {
+func (o *Options) headURL(expectHeaders map[string]string) (int64, string, error) {
 	head, err := o.client.Head(o.url)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 
 	if head.Header.Get("accept-ranges") != "bytes" {
-		return 0, ErrRangeReadNotSupported
+		return 0, "", ErrRangeReadNotSupported
 	}
 
-	return head.ContentLength, nil
+	for k, v := range expectHeaders {
+		if sent := head.Header.Get(k); sent != v {
+			return 0, "", headerErrs[k]
+		}
+	}
+
+	return head.ContentLength, head.Header.Get("Etag"), nil
 }
 
-func (o *Options) HashURL() (hash.Hash, error) {
+func (o *Options) HashURL(hashSize uint) (hash.Hash, error) {
 	res, err := o.client.Get(o.url)
 	if err != nil {
 		return nil, err
 	}
 	defer res.Body.Close()
 
-	return Sha256SumReader(res.Body)
+	switch hashSize {
+	case sha256.Size:
+		return Sha256SumReader(res.Body)
+	default:
+		return md5SumReader(res.Body)
+	}
 }
 
-func (r *ReadAtCloser) HashURL() (hash.Hash, error) {
-	return r.options.HashURL()
+func (r *ReadAtCloser) HashURL(size uint) (hash.Hash, error) {
+	return r.options.HashURL(size)
 }
 
 func (r *ReadAtCloser) Length() int64 {
@@ -181,8 +209,8 @@ func (r *ReadAtCloser) Close() error {
 	return nil
 }
 
-func (r *ReadCloser) HashURL() (hash.Hash, error) {
-	return r.options.HashURL()
+func (r *ReadCloser) HashURL(size uint) (hash.Hash, error) {
+	return r.options.HashURL(size)
 }
 
 func (r *ReadCloser) Read(p []byte) (n int, err error) {
@@ -235,4 +263,15 @@ func Sha256SumReader(r io.Reader) (hash.Hash, error) {
 	}
 
 	return shaSum, nil
+}
+
+// md5SumReader reads from r until and calculates the md5 sum, until r is exhausted.
+func md5SumReader(r io.Reader) (hash.Hash, error) {
+	md5sum := md5.New()
+	buf := make([]byte, ReadSizeLimit)
+	if _, err := io.CopyBuffer(md5sum, r, buf); err != nil {
+		return nil, err
+	}
+
+	return md5sum, nil
 }

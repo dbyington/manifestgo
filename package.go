@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/dbyington/httpio"
 
@@ -35,6 +36,10 @@ type Package struct {
 	Hashes []hash.Hash
 	URL    string
 	Size   int64
+
+	// Resource info
+	ContentLength int64
+	Etag          string
 }
 
 func (p *Package) GetBundleIdentifier() string {
@@ -74,21 +79,27 @@ func (p *Package) AsJSON(indent int) ([]byte, error) {
 	return json.Marshal(p)
 }
 
-func ReadPkgUrl(client *http.Client, url string) (*Package, error) {
-	r, err := httpio.NewReadAtCloser(httpio.WithClient(client), httpio.WithURL(url))
+func ReadPkgUrl(client *http.Client, url string, hashSize uint, expect map[string]string) (*Package, error) {
+	r, err := httpio.NewReadAtCloser(httpio.WithClient(client), httpio.WithURL(url), httpio.WithExpectHeaders(expect))
 	if err != nil {
 		return nil, err
 	}
 
-	shaSum, err := r.HashURL()
-	if err != nil {
-		return nil, err
-	}
+	// Hasing the file could take a while so we're going to farm that out immediately and inspect the error later.
+	var (
+		hashSum hash.Hash
+		hashErr error
+	)
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func(wg *sync.WaitGroup) {
+		defer wg.Done()
+		hashSum, hashErr = r.HashURL(hashSize)
+	}(wg)
 
 	p := &Package{
-		Hashes: []hash.Hash{shaSum},
-		Size:   r.Length(),
-		URL:    url,
+		Size: r.Length(),
+		URL:  url,
 	}
 
 	x, err := xar.NewReader(r, r.Length())
@@ -99,6 +110,12 @@ func ReadPkgUrl(client *http.Client, url string) (*Package, error) {
 	if err := p.fill(x); err != nil {
 		return nil, err
 	}
+
+	wg.Wait()
+	if hashErr != nil {
+		return nil, hashErr
+	}
+	p.Hashes = append(p.Hashes, hashSum)
 
 	return p, nil
 }
