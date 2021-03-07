@@ -160,6 +160,10 @@ func (r *ReadAtCloser) Length() int64 {
 	return r.contentLength
 }
 
+func (r *ReadAtCloser) Etag() string {
+    return r.etag
+}
+
 // ReadAt satisfies the io.ReaderAt interface. It requires that
 func (r *ReadAtCloser) ReadAt(b []byte, start int64) (n int, err error) {
 	end := start + int64(len(b))

@@ -100,6 +100,7 @@ func ReadPkgUrl(client *http.Client, url string, hashSize uint, expect map[strin
 	p := &Package{
 		Size: r.Length(),
 		URL:  url,
+		Etag: r.Etag(),
 	}
 
 	x, err := xar.NewReader(r, r.Length())
