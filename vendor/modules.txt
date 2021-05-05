@@ -1,4 +1,4 @@
-# github.com/dbyington/httpio v0.0.6-alpha
+# github.com/dbyington/httpio v1.0.0
 ## explicit
 github.com/dbyington/httpio
 # github.com/fsnotify/fsnotify v1.4.9
