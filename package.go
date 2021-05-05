@@ -79,7 +79,7 @@ func (p *Package) AsJSON(indent int) ([]byte, error) {
 	return json.Marshal(p)
 }
 
-func ReadPkgUrl(client *http.Client, url string, hashSize uint, expect map[string]string) (*Package, error) {
+func ReadPkgUrl(client *http.Client, url string, hashSize uint, hashChunkSize int64, expect map[string]string) (*Package, error) {
 	r, err := httpio.NewReadAtCloser(httpio.WithClient(client), httpio.WithURL(url), httpio.WithExpectHeaders(expect))
 	if err != nil {
 		return nil, err
@@ -87,14 +87,16 @@ func ReadPkgUrl(client *http.Client, url string, hashSize uint, expect map[strin
 
 	// Hasing the file could take a while so we're going to farm that out immediately and inspect the error later.
 	var (
-		hashSum hash.Hash
+		hashes []hash.Hash
 		hashErr error
 	)
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	go func(wg *sync.WaitGroup) {
 		defer wg.Done()
-		hashSum, hashErr = r.HashURL(hashSize)
+		h, hErr := r.HashURL(hashSize, hashChunkSize)
+		hashes = h
+		hashErr = hErr
 	}(wg)
 
 	p := &Package{
@@ -116,7 +118,7 @@ func ReadPkgUrl(client *http.Client, url string, hashSize uint, expect map[strin
 	if hashErr != nil {
 		return nil, hashErr
 	}
-	p.Hashes = append(p.Hashes, hashSum)
+	p.Hashes = append(p.Hashes, hashes...)
 
 	return p, nil
 }
