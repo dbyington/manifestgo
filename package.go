@@ -110,7 +110,7 @@ func ReadPkgUrl(client *http.Client, url string, hashSize uint, hashChunkSize in
 		return nil, err
 	}
 
-	if err := p.fill(x); err != nil {
+	if err = p.fill(x); err != nil {
 		return nil, err
 	}
 
