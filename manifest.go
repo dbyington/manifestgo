@@ -88,16 +88,13 @@ func BuildPackageManifest(p *Package) (*Manifest, error) {
 			a.MD5Size = p.Size
 			a.MD5s = append(a.MD5s, hex.EncodeToString(h.Sum(nil)))
 		case sha256.Size:
+		    logrus.Infof("appending hash %x to hashes", h.Sum(nil))
 			a.SHA256Size = p.Size
 			a.SHA256s = append(a.SHA256s, hex.EncodeToString(h.Sum(nil)))
 		default:
 			fmt.Printf("unsupported hash size: %d, expected %d or %d\n", h.Size(), md5.Size, sha256.Size)
 			continue
 		}
-	}
-
-	if a.MD5Size == 0 || a.SHA256Size == 0 {
-		return nil, errors.New("failed to create manifest: no hashes in asset")
 	}
 
 	metadata := &Metadata{
