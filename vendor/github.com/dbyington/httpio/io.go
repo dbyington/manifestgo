@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/ioutil"
 	"math"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
@@ -34,6 +35,9 @@ var (
 	}
 )
 
+// MaxConcurrentReaders limits the number of concurrent reads.
+const MaxConcurrentReaders = 5
+
 // RequestError fulfills the error type for reporting more specific errors with http requests.
 type RequestError struct {
 	StatusCode string
@@ -50,9 +54,11 @@ const ReadSizeLimit = 32768
 
 // Options contains the parts to create and use a ReadCloser or ReadAtCloser
 type Options struct {
-	client        *http.Client
-	url           string
-	expectHeaders map[string]string
+	client               *http.Client
+	hashChunkSize        int64
+	expectHeaders        map[string]string
+	maxConcurrentReaders int64
+	url                  string
 }
 
 // Option is a func type used to pass options to the New* funcs.
@@ -65,6 +71,36 @@ type ReadCloser struct {
 	cancel context.CancelFunc
 }
 
+type readClient interface {
+	do(req *http.Request) (*http.Response, error)
+}
+
+type readAtCloseRead struct {
+	client    readClient
+	ctx       context.Context
+	cancelCTX context.CancelFunc
+	id        string
+}
+
+func (r *ReadAtCloser) newReader() *readAtCloseRead {
+	ctx, cancel := context.WithCancel(r.ctx)
+	reader := &readAtCloseRead{
+		client:    r,
+		ctx:       ctx,
+		cancelCTX: cancel,
+		id:        randomString(),
+	}
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	r.readers[reader.id] = reader
+
+	return reader
+}
+
+func (r *readAtCloseRead) cancel() {
+	r.cancelCTX()
+}
+
 // ReadAtCloser contains the required options and metadata to implement io.ReadAtCloser on a URL.
 // Use the Options to configure the ReadAtCloser with an http.Client, URL, and any additional http.Header values that should be sent with the request.
 type ReadAtCloser struct {
@@ -72,7 +108,31 @@ type ReadAtCloser struct {
 	contentLength int64
 	etag          string
 
-	cancel context.CancelFunc
+	ctx               context.Context
+	cancel            context.CancelFunc
+	readerWG          *sync.WaitGroup
+	concurrentReaders chan struct{}
+	mutex             *sync.Mutex
+	readers           map[string]*readAtCloseRead
+}
+
+func (r *ReadAtCloser) do(req *http.Request) (*http.Response, error) {
+	r.concurrentReaders <- struct{}{}
+	res, err := r.options.client.Do(req)
+	<-r.concurrentReaders
+	return res, err
+}
+
+func (r *ReadAtCloser) finishReader(id string) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	reader, ok := r.readers[id]
+	if !ok {
+		return
+	}
+
+	reader.cancel()
+	delete(r.readers, id)
 }
 
 // NewReadAtCloser validates the options provided and returns a new a *ReadAtCloser after validating the URL. The URL validation includes basic scheme and hostnane checks.
@@ -88,15 +148,28 @@ func NewReadAtCloser(opts ...Option) (r *ReadAtCloser, err error) {
 		return nil, err
 	}
 
+	maxReaders := o.maxConcurrentReaders
+	if maxReaders == 0 {
+		maxReaders = MaxConcurrentReaders
+	}
+
 	contentLength, etag, err := o.headURL(o.expectHeaders)
 	if err != nil {
 		return nil, err
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	return &ReadAtCloser{
-		contentLength: contentLength,
-		etag:          etag,
-		options:       o,
+		contentLength:     contentLength,
+		etag:              etag,
+		options:           o,
+		ctx:               ctx,
+		cancel:            cancel,
+		mutex:             &sync.Mutex{},
+		concurrentReaders: make(chan struct{}, maxReaders),
+		readerWG:          &sync.WaitGroup{},
+		readers:           make(map[string]*readAtCloseRead),
 	}, nil
 }
 
@@ -114,10 +187,24 @@ func WithURL(url string) Option {
 	}
 }
 
+// WithMaxConcurrentReaders is an Option to set the maximum number of concurrent go funcs performing Reads in any Reader. If not supplied the default MaxConcurrentReaders is used.
+func WithMaxConcurrentReaders(r int64) Option {
+	return func(o *Options) {
+		o.maxConcurrentReaders = r
+	}
+}
+
 // WithExpectHeaders is an Option func used to specify any expected response headers from the server.
 func WithExpectHeaders(e map[string]string) Option {
 	return func(o *Options) {
 		o.expectHeaders = e
+	}
+}
+
+// WithHashChunkSize is an Option func to specify the size to chunk content at when hashing the content.
+func WithHashChunkSize(s int64) Option {
+	return func(o *Options) {
+		o.hashChunkSize = s
 	}
 }
 
@@ -186,22 +273,27 @@ func (o *Options) hashURL(hashSize uint) (hash.Hash, error) {
 }
 
 // HashURL takes the hash scheme as a uint (either sha256.Size or md5.Size) and the chunk size, and returns the hashed URL body in the supplied scheme as a slice of hash.Hash.
-// When the chunk size is less than the length of the content, the URL will be read with multiple, parallel range reads to create the slice of hash.Hash.
+// When the chunk size is less than the length of the content, the URL will be read with multiple, concurrent range reads to create the slice of hash.Hash.
 // Specifying a chunkSize <= 0 is translated to "do not chunk" and the entire content will be hashed as one chunk.
 // The size and capacity of the returned slice of hash.Hash is equal to the number of chunks calculated based on the content length divided by the chunkSize, or 1 if chunkSize is equal to, or less than 0.
-func (r *ReadAtCloser) HashURL(scheme uint, chunkSize int64) ([]hash.Hash, error) {
+func (r *ReadAtCloser) HashURL(scheme uint) ([]hash.Hash, error) {
+	r.mutex.Lock()
+	cl := r.contentLength
+	chunkSize := r.options.hashChunkSize
+	r.mutex.Unlock()
+
 	if chunkSize <= 0 {
-		chunkSize = r.contentLength
+		chunkSize = cl
 	}
 	var chunks int64
 
 	// If chunkSize is greater than the content length reset it to the available length and set number of chunks to 1.
 	// Otherwise we need to divide the length by the number of chunks and round up. The final chunkSize will be the sum of the remainder.
-	if chunkSize > r.contentLength {
-		chunkSize = r.contentLength
+	if chunkSize > cl {
+		chunkSize = cl
 		chunks = 1
 	} else {
-		chunks = int64(math.Ceil(float64(r.contentLength) / float64(chunkSize)))
+		chunks = int64(math.Ceil(float64(cl) / float64(chunkSize)))
 	}
 
 	var hasher func(reader io.Reader) (hash.Hash, error)
@@ -218,14 +310,9 @@ func (r *ReadAtCloser) HashURL(scheme uint, chunkSize int64) ([]hash.Hash, error
 	wg := sync.WaitGroup{}
 
 	for i := int64(0); i < chunks; i++ {
-		// create a copy of the ReadAtCloser to operate on
-		rOpt := *r.options
-		rac := *r
-		rac.options = &rOpt
-
 		wg.Add(1)
 		go func(w *sync.WaitGroup, idx int64, size int64, rac *ReadAtCloser) {
-			defer wg.Done()
+			defer w.Done()
 			b := make([]byte, size)
 			if _, err := rac.ReadAt(b, size*idx); err != nil {
 				hashErrs[idx] = err
@@ -242,7 +329,7 @@ func (r *ReadAtCloser) HashURL(scheme uint, chunkSize int64) ([]hash.Hash, error
 			}
 
 			hashes[idx] = h
-		}(&wg, i, chunkSize, &rac)
+		}(&wg, i, chunkSize, r)
 	}
 
 	wg.Wait()
@@ -267,11 +354,15 @@ func checkErrSlice(es []error) (err error) {
 
 // Length returns the reported ContentLength of the URL body.
 func (r *ReadAtCloser) Length() int64 {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
 	return r.contentLength
 }
 
 // Etag returns the last read Etag from the URL being operated on by the configured ReadAtCloser.
 func (r *ReadAtCloser) Etag() string {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
 	return r.etag
 }
 
@@ -279,9 +370,12 @@ func (r *ReadAtCloser) Etag() string {
 func (r *ReadAtCloser) ReadAt(b []byte, start int64) (n int, err error) {
 	end := start + int64(len(b))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	r.cancel = cancel
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.options.url, nil)
+	r.readerWG.Add(1)
+	defer r.readerWG.Done()
+
+	reader := r.newReader()
+	defer r.finishReader(reader.id)
+	req, err := http.NewRequestWithContext(reader.ctx, http.MethodGet, r.options.url, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -289,7 +383,7 @@ func (r *ReadAtCloser) ReadAt(b []byte, start int64) (n int, err error) {
 	requestRange := fmt.Sprintf("bytes=%d-%d", start, end)
 	req.Header.Add("Range", requestRange)
 
-	res, err := r.options.client.Do(req)
+	res, err := reader.client.do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -303,6 +397,8 @@ func (r *ReadAtCloser) ReadAt(b []byte, start int64) (n int, err error) {
 
 	copy(b, bt)
 
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
 	if r.contentLength < end {
 		return int(res.ContentLength - start), io.ErrUnexpectedEOF
 	}
@@ -322,6 +418,8 @@ func (r *ReadAtCloser) Close() error {
 	}
 
 	r.options.client.CloseIdleConnections()
+
+	r.readerWG.Wait()
 	return nil
 }
 
@@ -392,4 +490,13 @@ func md5SumReader(r io.Reader) (hash.Hash, error) {
 	}
 
 	return md5sum, nil
+}
+
+func randomString() string {
+	letters := []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+	s := make([]rune, rand.Intn(25)+25)
+	for i := range s {
+		s[i] = letters[rand.Intn(len(letters))]
+	}
+	return string(s)
 }

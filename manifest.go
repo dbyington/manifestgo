@@ -70,14 +70,17 @@ func (m *Manifest) AsEncodedPlistString(indent int) (string, error) {
 }
 
 func BuildPackageManifest(p *Package) (*Manifest, error) {
-	var assets []*Asset
-	for _, h := range p.Hashes {
-		a := &Asset{
-			Kind: "software-package",
-			URL:  p.URL,
-		}
+	a := &Asset{
+		Kind: "software-package",
+		URL:  p.URL,
+	}
 
-		switch h.Size() {
+	if len(p.Hashes) == 0 {
+		return nil, errors.New("unable to create asset: no hashes available")
+	}
+
+	for _, h := range p.Hashes {
+		switch p.hashType {
 		case md5.Size:
 			a.MD5Size = p.Size
 			a.MD5s = append(a.MD5s, hex.EncodeToString(h.Sum(nil)))
@@ -88,13 +91,6 @@ func BuildPackageManifest(p *Package) (*Manifest, error) {
 			fmt.Printf("unsupported hash size: %d, expected %d or %d\n", h.Size(), md5.Size, sha256.Size)
 			continue
 		}
-
-		assets = append(assets, a)
-	}
-
-	// If we couldn't build any assets then the manifest is invalid.
-	if len(assets) == 0 {
-		return nil, errors.New("could not build a valid manifest: no valid asset found")
 	}
 
 	metadata := &Metadata{
@@ -108,7 +104,7 @@ func BuildPackageManifest(p *Package) (*Manifest, error) {
 	m := &Manifest{
 		ManifestItems: []*Item{
 			{
-				Assets:   assets,
+				Assets:   []*Asset{a},
 				Metadata: metadata,
 			},
 		},

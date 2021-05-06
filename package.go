@@ -13,7 +13,6 @@ import (
 	"sync"
 
 	"github.com/dbyington/httpio"
-
 	xar "github.com/dbyington/manifestgo/goxar"
 )
 
@@ -40,6 +39,11 @@ type Package struct {
 	// Resource info
 	ContentLength int64
 	Etag          string
+	hashType      uint
+}
+
+func NewEmptyPackage() *Package {
+	return &Package{}
 }
 
 func (p *Package) GetBundleIdentifier() string {
@@ -79,30 +83,48 @@ func (p *Package) AsJSON(indent int) ([]byte, error) {
 	return json.Marshal(p)
 }
 
+func (p *Package) ReadFromURL(client *http.Client, url string, hashSize uint, hashChunkSize int64, expect map[string]string) error {
+	pkg, err := ReadPkgUrl(client, url, hashSize, hashChunkSize, expect)
+	if err != nil {
+		return err
+	}
+	*p = *pkg
+	return nil
+}
+
 func ReadPkgUrl(client *http.Client, url string, hashSize uint, hashChunkSize int64, expect map[string]string) (*Package, error) {
-	r, err := httpio.NewReadAtCloser(httpio.WithClient(client), httpio.WithURL(url), httpio.WithExpectHeaders(expect))
+	r, err := httpio.NewReadAtCloser(
+		httpio.WithClient(client),
+		httpio.WithURL(url),
+		httpio.WithExpectHeaders(expect),
+		httpio.WithHashChunkSize(hashChunkSize),
+	)
 	if err != nil {
 		return nil, err
 	}
 
 	// Hasing the file could take a while so we're going to farm that out immediately and inspect the error later.
 	var (
-		hashes []hash.Hash
+		hashes  []hash.Hash
 		hashErr error
 	)
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	go func(wg *sync.WaitGroup) {
 		defer wg.Done()
-		h, hErr := r.HashURL(hashSize, hashChunkSize)
-		hashes = h
-		hashErr = hErr
+		hashes, hashErr = r.HashURL(hashSize)
 	}(wg)
 
+	size := r.Length()
+	if hashChunkSize < size {
+		size = hashChunkSize
+	}
+
 	p := &Package{
-		Size: r.Length(),
-		URL:  url,
-		Etag: r.Etag(),
+		Size:     size,
+		URL:      url,
+		Etag:     r.Etag(),
+		hashType: hashSize,
 	}
 
 	x, err := xar.NewReader(r, r.Length())
@@ -110,7 +132,7 @@ func ReadPkgUrl(client *http.Client, url string, hashSize uint, hashChunkSize in
 		return nil, err
 	}
 
-	if err := p.fill(x); err != nil {
+	if err = p.fill(x); err != nil {
 		return nil, err
 	}
 
