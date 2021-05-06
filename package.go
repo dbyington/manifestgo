@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"hash"
 	"io"
 	"os"
@@ -53,9 +54,9 @@ type PackageReader interface {
 
 func NewPackage(pr PackageReader, hashTypeSize uint, hashChunkSize int64) *Package {
 	return &Package{
-		reader:   pr,
+		reader:        pr,
 		hashChunkSize: hashChunkSize,
-		hashType: hashTypeSize,
+		hashType:      hashTypeSize,
 	}
 }
 
@@ -97,6 +98,10 @@ func (p *Package) AsJSON(indent int) ([]byte, error) {
 }
 
 func (p *Package) ReadFromURL() error {
+	urlHasher := p.reader.HashURL
+	if urlHasher == nil {
+		return errors.New("no hasher")
+	}
 	// r, err := httpio.NewReadAtCloser(
 	// 	httpio.WithClient(client),
 	// 	httpio.WithURL(url),
