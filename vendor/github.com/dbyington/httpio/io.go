@@ -225,7 +225,7 @@ func (r *ReadAtCloser) HashURL(scheme uint, chunkSize int64) ([]hash.Hash, error
 
 		wg.Add(1)
 		go func(w *sync.WaitGroup, idx int64, size int64, rac *ReadAtCloser) {
-			defer wg.Done()
+			defer w.Done()
 			b := make([]byte, size)
 			if _, err := rac.ReadAt(b, size*idx); err != nil {
 				hashErrs[idx] = err
