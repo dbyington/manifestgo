@@ -99,8 +99,13 @@ func ReadPkgUrl(client *http.Client, url string, hashSize uint, hashChunkSize in
 		hashes, hashErr = r.HashURL(hashSize, hashChunkSize)
 	}(wg)
 
+	size := r.Length()
+	if hashChunkSize < size {
+	    size = hashChunkSize
+    }
+
 	p := &Package{
-		Size: r.Length(),
+		Size: size,
 		URL:  url,
 		Etag: r.Etag(),
 	}
