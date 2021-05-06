@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/dbyington/httpio"
+	"github.com/sirupsen/logrus"
 
 	xar "github.com/dbyington/manifestgo/goxar"
 )
@@ -87,16 +88,14 @@ func ReadPkgUrl(client *http.Client, url string, hashSize uint, hashChunkSize in
 
 	// Hasing the file could take a while so we're going to farm that out immediately and inspect the error later.
 	var (
-		hashes []hash.Hash
+		hashes  []hash.Hash
 		hashErr error
 	)
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	go func(wg *sync.WaitGroup) {
 		defer wg.Done()
-		h, hErr := r.HashURL(hashSize, hashChunkSize)
-		hashes = h
-		hashErr = hErr
+		hashes, hashErr = r.HashURL(hashSize, hashChunkSize)
 	}(wg)
 
 	p := &Package{
@@ -118,6 +117,7 @@ func ReadPkgUrl(client *http.Client, url string, hashSize uint, hashChunkSize in
 	if hashErr != nil {
 		return nil, hashErr
 	}
+	logrus.Infof("got %d hash chunks", len(hashes))
 	p.Hashes = append(p.Hashes, hashes...)
 
 	return p, nil
