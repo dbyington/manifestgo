@@ -41,6 +41,7 @@ type Package struct {
 	// Resource info
 	ContentLength int64
 	Etag          string
+	hashType      uint
 }
 
 func NewEmptyPackage() *Package {
@@ -123,9 +124,10 @@ func ReadPkgUrl(client *http.Client, url string, hashSize uint, hashChunkSize in
 	}
 
 	p := &Package{
-		Size: size,
-		URL:  url,
-		Etag: r.Etag(),
+		Size:     size,
+		URL:      url,
+		Etag:     r.Etag(),
+		hashType: hashSize,
 	}
 
 	x, err := xar.NewReader(r, r.Length())
