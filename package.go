@@ -43,6 +43,10 @@ type Package struct {
 	Etag          string
 }
 
+func NewEmptyPackage() *Package {
+	return &Package{}
+}
+
 func (p *Package) GetBundleIdentifier() string {
 	return p.PkgRef.Bundle.ID
 }
@@ -80,8 +84,22 @@ func (p *Package) AsJSON(indent int) ([]byte, error) {
 	return json.Marshal(p)
 }
 
+func (p *Package) ReadFromURL(client *http.Client, url string, hashSize uint, hashChunkSize int64, expect map[string]string) error {
+	pkg, err := ReadPkgUrl(client, url, hashSize, hashChunkSize, expect)
+	if err != nil {
+		return err
+	}
+	*p = *pkg
+	return nil
+}
+
 func ReadPkgUrl(client *http.Client, url string, hashSize uint, hashChunkSize int64, expect map[string]string) (*Package, error) {
-	r, err := httpio.NewReadAtCloser(httpio.WithClient(client), httpio.WithURL(url), httpio.WithExpectHeaders(expect))
+	r, err := httpio.NewReadAtCloser(
+		httpio.WithClient(client),
+		httpio.WithURL(url),
+		httpio.WithExpectHeaders(expect),
+		httpio.WithHashChunkSize(hashChunkSize),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -96,13 +114,13 @@ func ReadPkgUrl(client *http.Client, url string, hashSize uint, hashChunkSize in
 	logrus.Infof("hashing with a hash chunk size of: %d", hashChunkSize)
 	go func(wg *sync.WaitGroup) {
 		defer wg.Done()
-		hashes, hashErr = r.HashURL(hashSize, hashChunkSize)
+		hashes, hashErr = r.HashURL(hashSize)
 	}(wg)
 
 	size := r.Length()
 	if hashChunkSize < size {
-	    size = hashChunkSize
-    }
+		size = hashChunkSize
+	}
 
 	p := &Package{
 		Size: size,

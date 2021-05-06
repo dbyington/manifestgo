@@ -3,7 +3,7 @@ module github.com/dbyington/manifestgo
 go 1.15
 
 require (
-	github.com/dbyington/httpio v1.0.1-0.20210506004308-ed2672ead6fe
+	github.com/dbyington/httpio v1.0.1-0.20210506161017-9ab3f6f26647
 	github.com/groob/plist v0.0.0-20200425180238-0f631f258c01
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/sirupsen/logrus v1.2.0
