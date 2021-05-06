@@ -80,6 +80,9 @@ func BuildPackageManifest(p *Package) (*Manifest, error) {
 	}
 
 	for _, h := range p.Hashes {
+		if h == nil {
+			return nil, errors.New("hash not ready")
+		}
 		switch p.hashType {
 		case md5.Size:
 			a.MD5Size = p.Size
