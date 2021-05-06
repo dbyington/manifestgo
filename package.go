@@ -7,12 +7,10 @@ import (
 	"encoding/xml"
 	"hash"
 	"io"
-	"net/http"
 	"os"
 	"strings"
 	"sync"
 
-	"github.com/dbyington/httpio"
 	xar "github.com/dbyington/manifestgo/goxar"
 )
 
@@ -39,11 +37,26 @@ type Package struct {
 	// Resource info
 	ContentLength int64
 	Etag          string
+
+	hashChunkSize int64
 	hashType      uint
+	reader        PackageReader
 }
 
-func NewEmptyPackage() *Package {
-	return &Package{}
+type PackageReader interface {
+	HashURL(uint) ([]hash.Hash, error)
+	Length() int64
+	Etag() string
+	URL() string
+	ReadAt(p []byte, off int64) (n int, err error)
+}
+
+func NewPackage(pr PackageReader, hashTypeSize uint, hashChunkSize int64) *Package {
+	return &Package{
+		reader:   pr,
+		hashChunkSize: hashChunkSize,
+		hashType: hashTypeSize,
+	}
 }
 
 func (p *Package) GetBundleIdentifier() string {
@@ -83,25 +96,16 @@ func (p *Package) AsJSON(indent int) ([]byte, error) {
 	return json.Marshal(p)
 }
 
-func (p *Package) ReadFromURL(client *http.Client, url string, hashSize uint, hashChunkSize int64, expect map[string]string) error {
-	pkg, err := ReadPkgUrl(client, url, hashSize, hashChunkSize, expect)
-	if err != nil {
-		return err
-	}
-	*p = *pkg
-	return nil
-}
-
-func ReadPkgUrl(client *http.Client, url string, hashSize uint, hashChunkSize int64, expect map[string]string) (*Package, error) {
-	r, err := httpio.NewReadAtCloser(
-		httpio.WithClient(client),
-		httpio.WithURL(url),
-		httpio.WithExpectHeaders(expect),
-		httpio.WithHashChunkSize(hashChunkSize),
-	)
-	if err != nil {
-		return nil, err
-	}
+func (p *Package) ReadFromURL() error {
+	// r, err := httpio.NewReadAtCloser(
+	// 	httpio.WithClient(client),
+	// 	httpio.WithURL(url),
+	// 	httpio.WithExpectHeaders(expect),
+	// 	httpio.WithHashChunkSize(hashChunkSize),
+	// )
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	// Hasing the file could take a while so we're going to farm that out immediately and inspect the error later.
 	var (
@@ -112,37 +116,34 @@ func ReadPkgUrl(client *http.Client, url string, hashSize uint, hashChunkSize in
 	wg.Add(1)
 	go func(wg *sync.WaitGroup) {
 		defer wg.Done()
-		hashes, hashErr = r.HashURL(hashSize)
+		hashes, hashErr = p.reader.HashURL(p.hashType)
 	}(wg)
 
-	size := r.Length()
-	if hashChunkSize < size {
-		size = hashChunkSize
+	size := p.reader.Length()
+	if p.hashChunkSize < size {
+		size = p.hashChunkSize
 	}
 
-	p := &Package{
-		Size:     size,
-		URL:      url,
-		Etag:     r.Etag(),
-		hashType: hashSize,
-	}
+	p.Size = size
+	p.URL = p.reader.URL()
+	p.Etag = p.reader.Etag()
 
-	x, err := xar.NewReader(r, r.Length())
+	x, err := xar.NewReader(p.reader, p.reader.Length())
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if err = p.fill(x); err != nil {
-		return nil, err
+		return err
 	}
 
 	wg.Wait()
 	if hashErr != nil {
-		return nil, hashErr
+		return hashErr
 	}
 	p.Hashes = append(p.Hashes, hashes...)
 
-	return p, nil
+	return nil
 }
 
 func ReadPkgFile(name string) (*Package, error) {
