@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/groob/plist"
-	"github.com/sirupsen/logrus"
 )
 
 // Manifest handles the manifest for install application command
@@ -80,14 +79,12 @@ func BuildPackageManifest(p *Package) (*Manifest, error) {
 		return nil, errors.New("unable to create asset: no hashes available")
 	}
 
-	logrus.Infof("iterating %d hashes", len(p.Hashes))
 	for _, h := range p.Hashes {
 		switch p.hashType {
 		case md5.Size:
 			a.MD5Size = p.Size
 			a.MD5s = append(a.MD5s, hex.EncodeToString(h.Sum(nil)))
 		case sha256.Size:
-		    logrus.Infof("appending hash %x to hashes", h.Sum(nil))
 			a.SHA256Size = p.Size
 			a.SHA256s = append(a.SHA256s, hex.EncodeToString(h.Sum(nil)))
 		default:
