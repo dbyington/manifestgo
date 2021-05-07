@@ -3,6 +3,7 @@ package manifestgo
 import (
 	"bufio"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -82,6 +83,15 @@ func (p *Package) GetTitle() string {
 		}
 	}
 	return p.Title
+}
+
+func (p *Package) GetHashStrings() []string {
+	s := make([]string, len(p.Hashes))
+	for i, h := range p.Hashes {
+		s[i] = hex.EncodeToString(h.Sum(nil))
+	}
+
+	return s
 }
 
 func (p *Package) BuildManifest() (*Manifest, error) {
