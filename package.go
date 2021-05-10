@@ -112,15 +112,6 @@ func (p *Package) ReadFromURL() error {
 	if urlHasher == nil {
 		return errors.New("no hasher")
 	}
-	// r, err := httpio.NewReadAtCloser(
-	// 	httpio.WithClient(client),
-	// 	httpio.WithURL(url),
-	// 	httpio.WithExpectHeaders(expect),
-	// 	httpio.WithHashChunkSize(hashChunkSize),
-	// )
-	// if err != nil {
-	// 	return nil, err
-	// }
 
 	// Hasing the file could take a while so we're going to farm that out immediately and inspect the error later.
 	var (
