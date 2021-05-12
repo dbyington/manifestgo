@@ -10,28 +10,28 @@
 package xar
 
 import (
-    "bytes"
-    "compress/bzip2"
-    "compress/zlib"
-    "crypto"
-    "crypto/md5"
-    "crypto/rsa"
-    "crypto/sha1"
-    "crypto/sha256"
-    "crypto/x509"
-    "encoding/base64"
-    "encoding/binary"
-    "encoding/hex"
-    "encoding/xml"
-    "errors"
-    "hash"
-    "io"
-    "io/ioutil"
-    "os"
-    "path"
-    "strconv"
-    "strings"
-    "time"
+	"bytes"
+	"compress/bzip2"
+	"compress/zlib"
+	"crypto"
+	"crypto/md5"
+	"crypto/rsa"
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/xml"
+	"errors"
+	"hash"
+	"io"
+	"io/ioutil"
+	"os"
+	"path"
+	"strconv"
+	"strings"
+	"time"
 )
 
 var (
@@ -139,7 +139,7 @@ type Reader struct {
 	xar        ReaderAtCloser
 	size       int64
 	heapOffset int64
-	hash hash.Hash
+	hash       hash.Hash
 }
 
 // OpenReader will open the XAR file specified by name and return a Reader.
@@ -256,14 +256,13 @@ func NewReader(r ReaderAtCloser, size int64) (*Reader, error) {
 
 	// Add files to Reader
 	for _, xmlFile := range root.Toc.File {
-
-	    // We only care about what's in the Distribution xml file
-	    if xmlFile.Name != "Distribution" {
-	        continue
-        }
-		err := xr.readXmlFileTree(xmlFile, "")
-		if err != nil {
-			return nil, err
+		switch xmlFile.Name {
+		// Grab only the Distribution or PackageInfo files
+		case "Distribution", "PackageInfo":
+			err := xr.readXmlFileTree(xmlFile, "")
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -474,9 +473,6 @@ func (r *Reader) readXmlFileTree(xmlFile *xmlFile, dir string) (err error) {
 		return
 	}
 	if xf.Type == FileTypeFile {
-		if  xf.Name != "Distribution" {
-			return
-		}
 		xf.EncodingMimetype = xmlFile.Data.Encoding.Style
 		xf.Size = xmlFile.Data.Size
 		xf.length = xmlFile.Data.Length
