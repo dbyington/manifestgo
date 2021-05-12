@@ -39,7 +39,6 @@ type Metadata struct {
 	BundleIdentifier string `plist:"bundle-identifier" json:"bundle_identifier"`
 	BundleVersion    string `plist:"bundle-version" json:"bundle_version"`
 	Kind             string `plist:"kind" json:"kind"`
-	Subtitle         string `plist:"subtitle" json:"subtitle"`
 	Title            string `plist:"title" json:"title"`
 }
 
@@ -80,6 +79,9 @@ func BuildPackageManifest(p *Package) (*Manifest, error) {
 	}
 
 	for _, h := range p.Hashes {
+		if h == nil {
+			return nil, errors.New("hash not ready")
+		}
 		switch p.hashType {
 		case md5.Size:
 			a.MD5Size = p.Size
@@ -95,9 +97,8 @@ func BuildPackageManifest(p *Package) (*Manifest, error) {
 
 	metadata := &Metadata{
 		BundleIdentifier: p.GetBundleIdentifier(),
-		BundleVersion:    p.GetBundleVersion(),
+		BundleVersion:    p.GetVersion(),
 		Kind:             p.GetKind(),
-		Subtitle:         p.GetSubtitle(),
 		Title:            p.GetTitle(),
 	}
 

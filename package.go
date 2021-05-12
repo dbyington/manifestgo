@@ -3,71 +3,237 @@ package manifestgo
 import (
 	"bufio"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"hash"
 	"io"
-	"net/http"
 	"os"
 	"strings"
 	"sync"
 
-	"github.com/dbyington/httpio"
 	xar "github.com/dbyington/manifestgo/goxar"
 )
 
 const ReadSizeLimit = 32768
 
+type sourceFile string
+
+const (
+	sourcePackageInfo  sourceFile = "PackageInfo"
+	sourceDistribution sourceFile = "Distribution"
+)
+
 type Bundle struct {
-	Version  string `xml:"CFBundleVersion,attr"`
-	ID       string `xml:"id,attr"`
-	SubTitle string `xml:"path,attr"`
+	ID      string `xml:"id,attr"`
+	Path    string `xml:"path,attr"`
+	Version string `xml:"CFBundleVersion,attr"`
 }
 
+type Line struct {
+	Choice string `xml:"choice,attr"`
+}
+
+type Choice struct {
+	ID          string   `xml:"id,attr"`
+	Title       string   `xml:"title,attr"`
+	Description string   `xml:"description,attr"`
+	PkgRef      []PkgRef `xml:"pkg-ref"`
+}
+
+type PkgInfo struct {
+	Identifier string   `xml:"identifier,attr"`
+	Version    string   `xml:"version,attr"`
+	Bundle     []Bundle `xml:"bundle"`
+}
 type PkgRef struct {
-	Version string `xml:"version,attr" json:"version"`
-	Bundle  Bundle `xml:"bundle-version>bundle"`
+	Bundle            []Bundle `xml:"bundle-version>bundle"`
+	ID                string   `xml:"id,attr"`
+	PackageIdentifier string   `xml:"packageIdentifier,attr"`
+	Version           string   `xml:"version,attr"`
+	Package           string
 }
 
 type Package struct {
-	PkgRef PkgRef `xml:"pkg-ref"`
-	Title  string `xml:"title"`
-	Hashes []hash.Hash
-	URL    string
-	Size   int64
+	Choice  Choice   `xml:"choice"`
+	PkgInfo PkgInfo  `xml:"pkg-info"`
+	PkgRef  []PkgRef `xml:"pkg-ref"`
+	Title   string   `xml:"title"`
+	Hashes  []hash.Hash
+	URL     string
+	Size    int64
+
+	id string
 
 	// Resource info
 	ContentLength int64
 	Etag          string
+
+	hashChunkSize int64
 	hashType      uint
+	reader        PackageReader
+	source        sourceFile
 }
 
-func NewEmptyPackage() *Package {
-	return &Package{}
+type PackageReader interface {
+	HashURL(uint) ([]hash.Hash, error)
+	Length() int64
+	Etag() string
+	URL() string
+	ReadAt(p []byte, off int64) (n int, err error)
+}
+
+func NewPackage(pr PackageReader, hashTypeSize uint, hashChunkSize int64) *Package {
+	return &Package{
+		reader:        pr,
+		hashChunkSize: hashChunkSize,
+		hashType:      hashTypeSize,
+	}
 }
 
 func (p *Package) GetBundleIdentifier() string {
-	return p.PkgRef.Bundle.ID
+	if p == nil {
+		return ""
+	}
+	if p.source == sourcePackageInfo {
+		return p.PkgInfo.Identifier
+	}
+
+	id := p.getPrimaryPkgRefBundle().ID
+
+	if id == "" {
+		id = p.getPrimaryPkgRef().ID
+	}
+
+	return id
 }
-func (p *Package) GetBundleVersion() string {
-	return p.PkgRef.Bundle.Version
-}
-func (p *Package) GetKind() string {
-	return "software"
-}
-func (p *Package) GetSubtitle() string {
-	return p.PkgRef.Bundle.SubTitle
-}
-func (p *Package) GetTitle() string {
-	if p.Title == "" {
-		if p.GetSubtitle() != "" {
-			p.Title = strings.TrimRight(p.GetSubtitle(), ".APPapp")
-		} else {
-			sub := strings.Split(p.GetBundleIdentifier(), ".")
-			p.Title = strings.Title(sub[len(sub)-1])
+
+func (p *Package) getPrimaryPkgRef() PkgRef {
+	if p == nil {
+		return PkgRef{}
+	}
+
+	if len(p.Choice.PkgRef) > 0 && p.Choice.ID != "" {
+		for _, cPkg := range p.PkgRef {
+			if cPkg.ID == p.Choice.ID {
+				return cPkg
+			}
 		}
 	}
+
+	if len(p.PkgRef) == 0 {
+		return PkgRef{}
+	}
+
+	return p.PkgRef[0]
+}
+
+func (p *Package) getPrimaryPkgRefBundle() Bundle {
+	if p == nil {
+		return Bundle{}
+	}
+
+	pkgRef := p.getPrimaryPkgRef()
+
+	if len(pkgRef.Bundle) == 0 {
+		return Bundle{}
+	}
+
+	for _, b := range pkgRef.Bundle {
+		if strings.EqualFold(b.ID, pkgRef.ID) {
+			return b
+		}
+	}
+
+	return pkgRef.Bundle[0]
+}
+
+func (p *Package) GetVersion() string {
+	if p == nil {
+		return ""
+	}
+
+	if p.source == sourcePackageInfo {
+		return p.PkgInfo.Version
+	}
+
+	v := p.getPrimaryPkgRef().Version
+
+	if v == "" {
+		v = p.getPrimaryPkgRefBundle().Version
+	}
+
+	return v
+}
+
+func (p *Package) GetKind() string {
+	if p == nil {
+		return ""
+	}
+	return "software"
+}
+
+func (p *Package) GetPath() string {
+	if p == nil {
+		return ""
+	}
+	return p.getPrimaryPkgRefBundle().Path
+}
+
+func (p *Package) GetTitle() string {
+	if p == nil {
+		return ""
+	}
+
+	if p.source == sourcePackageInfo {
+		primaryPkgID := p.PkgInfo.Identifier
+		if strings.HasSuffix(primaryPkgID, "pkg") {
+			pkgID := strings.Split(p.PkgInfo.Identifier, ".")
+			primaryPkgID = strings.Join(pkgID[:len(pkgID)-1], ".")
+		}
+
+		for _, bundle := range p.PkgInfo.Bundle {
+			if bundle.ID == primaryPkgID {
+				b := strings.SplitAfter(bundle.Path, "/")
+				t := strings.Split(b[len(b)-1], ".")
+				return t[0]
+			}
+		}
+	}
+
+	if p.Title != "" {
+		return p.Title
+	}
+
+	// TODO: Can this be used if the Title is not available or is obviously not what should be used?
+	// pkgID := strings.Split(p.GetBundleIdentifier(), ".")
+	// primaryPkgID := strings.Join(pkgID[:len(pkgID)-1], ".")
+	// for _, b := range p.getPrimaryPkgRef().Bundle {
+	//     if b.ID == primaryPkgID {
+	//         fmt.Printf("Got Bundle: %+v\n", b)
+	//     }
+	// }
+
+	if p.GetPath() != "" {
+		path := strings.Split(p.GetPath(), "/")
+		t := strings.Split(path[len(path)-1], ".")
+		p.Title = t[0]
+	} else {
+		sub := strings.Split(p.GetBundleIdentifier(), ".")
+		p.Title = strings.Title(sub[len(sub)-1])
+	}
+
 	return p.Title
+}
+
+func (p *Package) GetHashStrings() []string {
+	s := make([]string, len(p.Hashes))
+	for i, h := range p.Hashes {
+		s[i] = hex.EncodeToString(h.Sum(nil))
+	}
+
+	return s
 }
 
 func (p *Package) BuildManifest() (*Manifest, error) {
@@ -83,24 +249,10 @@ func (p *Package) AsJSON(indent int) ([]byte, error) {
 	return json.Marshal(p)
 }
 
-func (p *Package) ReadFromURL(client *http.Client, url string, hashSize uint, hashChunkSize int64, expect map[string]string) error {
-	pkg, err := ReadPkgUrl(client, url, hashSize, hashChunkSize, expect)
-	if err != nil {
-		return err
-	}
-	*p = *pkg
-	return nil
-}
-
-func ReadPkgUrl(client *http.Client, url string, hashSize uint, hashChunkSize int64, expect map[string]string) (*Package, error) {
-	r, err := httpio.NewReadAtCloser(
-		httpio.WithClient(client),
-		httpio.WithURL(url),
-		httpio.WithExpectHeaders(expect),
-		httpio.WithHashChunkSize(hashChunkSize),
-	)
-	if err != nil {
-		return nil, err
+func (p *Package) ReadFromURL() error {
+	urlHasher := p.reader.HashURL
+	if urlHasher == nil {
+		return errors.New("no hasher")
 	}
 
 	// Hasing the file could take a while so we're going to farm that out immediately and inspect the error later.
@@ -112,37 +264,34 @@ func ReadPkgUrl(client *http.Client, url string, hashSize uint, hashChunkSize in
 	wg.Add(1)
 	go func(wg *sync.WaitGroup) {
 		defer wg.Done()
-		hashes, hashErr = r.HashURL(hashSize)
+		hashes, hashErr = p.reader.HashURL(p.hashType)
 	}(wg)
 
-	size := r.Length()
-	if hashChunkSize < size {
-		size = hashChunkSize
+	size := p.reader.Length()
+	if p.hashChunkSize < size {
+		size = p.hashChunkSize
 	}
 
-	p := &Package{
-		Size:     size,
-		URL:      url,
-		Etag:     r.Etag(),
-		hashType: hashSize,
-	}
+	p.Size = size
+	p.URL = p.reader.URL()
+	p.Etag = p.reader.Etag()
 
-	x, err := xar.NewReader(r, r.Length())
+	x, err := xar.NewReader(p.reader, p.reader.Length())
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if err = p.fill(x); err != nil {
-		return nil, err
+		return err
 	}
 
 	wg.Wait()
 	if hashErr != nil {
-		return nil, hashErr
+		return hashErr
 	}
 	p.Hashes = append(p.Hashes, hashes...)
 
-	return p, nil
+	return nil
 }
 
 func ReadPkgFile(name string) (*Package, error) {
@@ -191,11 +340,6 @@ func Sha256SumReader(r io.Reader) (hash.Hash, error) {
 
 func (p *Package) fill(r *xar.Reader) error {
 	for _, f := range r.File {
-		// The reader should have only collected the Distribution file but just in case...
-		if f.Name != "Distribution" {
-			continue
-		}
-
 		distReader, err := f.Open()
 		if err != nil {
 			return err
@@ -207,10 +351,21 @@ func (p *Package) fill(r *xar.Reader) error {
 			return err
 		}
 
-		if err := xml.Unmarshal(b, &p); err != nil {
-			return err
+		// Because this could come from one of two sources, which have slightly different layouts we unmarshal into different interfaces depending on the file.
+		switch sourceFile(f.Name) {
+		case sourceDistribution:
+			if err := xml.Unmarshal(b, &p); err != nil {
+				return err
+			}
+		case sourcePackageInfo:
+			var pi PkgInfo
+			if err := xml.Unmarshal(b, &pi); err != nil {
+				return err
+			}
+			p.PkgInfo = pi
 		}
-
+		p.source = sourceFile(f.Name)
 	}
+
 	return nil
 }
