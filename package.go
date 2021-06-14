@@ -117,7 +117,9 @@ func (p *Package) getPrimaryPkgRef() PkgRef {
 	if len(p.Choice.PkgRef) > 0 && p.Choice.ID != "" {
 		for _, cPkg := range p.PkgRef {
 			if cPkg.ID == p.Choice.ID {
-				return cPkg
+				if cPkg.Version != "" || len(cPkg.Bundle) != 0 {
+					return cPkg
+				}
 			}
 		}
 	}
