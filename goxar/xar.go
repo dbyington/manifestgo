@@ -126,7 +126,7 @@ type File struct {
 
 type ReaderAtCloser interface {
 	io.ReaderAt
-	//io.Closer
+	// io.Closer
 }
 
 type Reader struct {
@@ -134,6 +134,7 @@ type Reader struct {
 
 	Certificates          []*x509.Certificate
 	SignatureCreationTime int64
+	Signer                *x509.Certificate
 	SignatureError        error
 
 	xar        ReaderAtCloser
@@ -335,6 +336,7 @@ func (r *Reader) readAndVerifySignature(root *xmlXar, checksumKind uint32, check
 		} else {
 			return ErrCertificateTypeUnsupported
 		}
+		r.Signer = r.Certificates[0]
 	}
 
 	return nil
@@ -342,17 +344,19 @@ func (r *Reader) readAndVerifySignature(root *xmlXar, checksumKind uint32, check
 
 // Close closes the opened XAR file.
 func (r *Reader) Close() error {
-	//return r.xar.Close()
+	// return r.xar.Close()
 	return nil
 }
 
+// HasSignature
 // This is a convenience method that returns true if the opened XAR archive
 // has a signature. Internally, it checks whether the SignatureCreationTime
 // field of the Reader is > 0.
 func (r *Reader) HasSignature() bool {
-	return r.SignatureCreationTime > 0
+	return r.Signer != nil
 }
 
+// ValidSignature
 // This is a convenience method that returns true of the signature if the
 // opened XAR archive was successfully verified.
 //
@@ -377,7 +381,7 @@ func (r *Reader) HasSignature() bool {
 // SignatureError field of the Reader can be used to determine a possible
 // cause.
 func (r *Reader) ValidSignature() bool {
-	return r.SignatureCreationTime > 0 && r.SignatureError == nil
+	return r.HasSignature() && r.SignatureError == nil
 }
 
 func xmlFileToFileInfo(xmlFile *xmlFile) (fi FileInfo, err error) {
