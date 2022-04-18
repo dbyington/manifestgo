@@ -64,7 +64,9 @@ type Package struct {
 	URL     string
 	Size    int64
 
-	id string
+	hasSignature   bool
+	signatureValid bool
+	id             string
 
 	// Resource info
 	ContentLength int64
@@ -242,6 +244,14 @@ func (p *Package) BuildManifest() (*Manifest, error) {
 	return BuildPackageManifest(p)
 }
 
+func (p *Package) HasValidSignature() bool {
+	return p.signatureValid
+}
+
+func (p *Package) IsSigned() bool {
+	return p.hasSignature
+}
+
 func (p *Package) AsJSON(indent int) ([]byte, error) {
 	if indent >= 0 {
 		ind := strings.Repeat(" ", indent)
@@ -313,8 +323,9 @@ func ReadPkgFile(name string) (*Package, error) {
 	}
 
 	p := &Package{
-		Hashes: []hash.Hash{shaSum},
-		Size:   fstat.Size(),
+		hashType: sha256.Size,
+		Hashes:   []hash.Hash{shaSum},
+		Size:     fstat.Size(),
 	}
 
 	r, err := xar.NewReader(f, fstat.Size())
@@ -368,6 +379,9 @@ func (p *Package) fill(r *xar.Reader) error {
 		}
 		p.source = sourceFile(f.Name)
 	}
+
+	p.hasSignature = r.HasSignature()
+	p.signatureValid = r.ValidSignature()
 
 	return nil
 }
