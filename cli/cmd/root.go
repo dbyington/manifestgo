@@ -27,9 +27,6 @@ import (
     "github.com/dbyington/httpio"
     "github.com/spf13/cobra"
 
-    "github.com/mitchellh/go-homedir"
-    "github.com/spf13/viper"
-
     "github.com/dbyington/manifestgo"
 )
 
@@ -37,11 +34,11 @@ const hundredMB =  100 * (1 << 20)
 
 
 var (
-    chunkSize        int64
-    cfgFile, pkgFile string
-    pkgUrl string
-    plistOutput      bool
-    validSig         bool
+    chunkSize   int64
+    pkgFile     string
+    pkgUrl      string
+    plistOutput bool
+    validSig    bool
 )
 
 var ErrPkgNotExist = os.ErrNotExist
@@ -128,18 +125,6 @@ func Execute() {
 }
 
 func init() {
-    cobra.OnInitialize(initConfig)
-
-    // Here you will define your flags and configuration settings.
-    // Cobra supports persistent flags, which, if defined here,
-    // will be global for your application.
-
-    rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.manifestgo.yaml)")
-
-    // Cobra also supports local flags, which will only run
-    // when this action is called directly.
-    // rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
-
     rootCmd.PersistentFlags().Int64Var(&chunkSize, "chunksize", hundredMB, "checksum chunk size")
     rootCmd.PersistentFlags().StringVar(&pkgFile, "pkg", "", "pkg file")
     rootCmd.PersistentFlags().StringVar(&pkgUrl, "url", "", "pkg url")
@@ -147,25 +132,3 @@ func init() {
     rootCmd.PersistentFlags().BoolVar(&validSig, "validSignature", true, "validSignature, require the pkg to have been signed with a valid certificate")
 }
 
-// initConfig reads in config file and ENV variables if set.
-func initConfig() {
-    if cfgFile != "" {
-        // Use config file from the flag.
-        viper.SetConfigFile(cfgFile)
-    } else {
-        // Find home directory.
-        home, err := homedir.Dir()
-        cobra.CheckErr(err)
-
-        // Search config in home directory with name ".manifestgo" (without extension).
-        viper.AddConfigPath(home)
-        viper.SetConfigName(".manifestgo")
-    }
-
-    viper.AutomaticEnv() // read in environment variables that match
-
-    // If a config file is found, read it in.
-    if err := viper.ReadInConfig(); err == nil {
-        fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
-    }
-}
