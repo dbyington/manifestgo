@@ -1,4 +1,4 @@
-// +build required
+// +build required arm64
 
 package gl
 

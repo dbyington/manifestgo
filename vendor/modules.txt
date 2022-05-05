@@ -5,6 +5,7 @@ fyne.io/fyne/v2/app
 fyne.io/fyne/v2/canvas
 fyne.io/fyne/v2/container
 fyne.io/fyne/v2/data/binding
+fyne.io/fyne/v2/dialog
 fyne.io/fyne/v2/driver/desktop
 fyne.io/fyne/v2/driver/mobile
 fyne.io/fyne/v2/internal
@@ -60,7 +61,8 @@ github.com/go-gl/glfw/v3.3/glfw/glfw/deps/mingw
 github.com/go-gl/glfw/v3.3/glfw/glfw/deps/vs2008
 github.com/go-gl/glfw/v3.3/glfw/glfw/include/GLFW
 github.com/go-gl/glfw/v3.3/glfw/glfw/src
-# github.com/godbus/dbus/v5 v5.0.4
+# github.com/godbus/dbus/v5 v5.1.0
+## explicit
 github.com/godbus/dbus/v5
 # github.com/goki/freetype v0.0.0-20181231101311-fa8a33aabaff
 github.com/goki/freetype
@@ -104,7 +106,8 @@ golang.org/x/image/vector
 golang.org/x/net/html
 golang.org/x/net/html/atom
 golang.org/x/net/html/charset
-# golang.org/x/sys v0.0.0-20210630005230-0f9fa26af87c
+# golang.org/x/sys v0.0.0-20220319134239-a9b59b0215f8
+## explicit
 golang.org/x/sys/execabs
 golang.org/x/sys/internal/unsafeheader
 golang.org/x/sys/unix

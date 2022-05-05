@@ -1,43 +1,48 @@
 package main
 
 import (
-    "crypto/sha256"
-    "errors"
-    "net/http"
-    "net/url"
-    "strconv"
-    "strings"
+	"crypto/sha256"
+	"errors"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 
-    "fyne.io/fyne/v2"
-    "fyne.io/fyne/v2/app"
-    "fyne.io/fyne/v2/container"
-    "fyne.io/fyne/v2/data/binding"
-    "fyne.io/fyne/v2/layout"
-    "fyne.io/fyne/v2/widget"
-    "github.com/dbyington/httpio"
-    "github.com/dbyington/manifestgo"
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/data/binding"
+	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/widget"
+	"github.com/dbyington/httpio"
+	"github.com/dbyington/manifestgo"
 )
 
 const (
 	windowTitle          = "Manifest Builder"
 	manifestBuilderLabel = "Welcome to Manifest Builder"
 
+	progressDialogText = "Building Manifest..."
+
 	defaultWidth  = 1024
 	defaultHeight = 800
 
-    footerHeight = 150
+	footerHeight = 150
+
+	aboutText = "This app was built in a matter of hours, without extensive testing. So, proceed with caution."
 
 	buttonLabel      = "Build"
 	inputPlaceHolder = "Enter URL pointing to PKG file here"
 
-    footerText = "hastily made by @dbyington"
-    footerURI = "https://github.com/dbyington/manifestgo/app"
+	footerText = "hastily made by @dbyington"
+	footerURI  = "https://github.com/dbyington/manifestgo/app"
 
-    resultText = `Enter a url in the field above and click 'Build' to build a manifestItems json object
+	resultText = `Enter a url in the field above and click 'Build' to build a manifestItems json object
 Note that the server that serves the supplied URL must support byte range reads for this app to work.`
 
-    noChunking = "none"
-	mb = 1 << 20
+	noChunking = "none"
+	mb         = 1 << 20
 )
 
 var (
@@ -48,154 +53,162 @@ func main() {
 
 	manifestApp := app.New()
 	window := manifestApp.NewWindow(windowTitle)
+
 	label := widget.NewLabel(manifestBuilderLabel)
 
 	// Result field
 	result := binding.NewString()
-    result.Set(resultText)
+	result.Set(resultText)
 
-    copyBtn := widget.NewButton("Copy To Clipboard", func() {
-        manifest, err := result.Get()
-        if err != nil {
-            result.Set(err.Error())
-            return
-        }
-        window.Clipboard().SetContent(manifest)
-    })
-    copyBtn.Disable()
+	copyBtn := widget.NewButton("Copy To Clipboard", func() {
+		manifest, err := result.Get()
+		if err != nil {
+			result.Set(err.Error())
+			return
+		}
+		window.Clipboard().SetContent(manifest)
+	})
+	copyBtn.Disable()
 
-    resultField := widget.NewLabelWithData(result)
-    resultField.Wrapping = fyne.TextWrapWord
+	resultField := widget.NewLabelWithData(result)
+	resultField.Wrapping = fyne.TextWrapWord
 
 	// Entry fields
 	urlEntry := widget.NewEntry()
 	urlEntry.SetPlaceHolder(inputPlaceHolder)
 
-    chunkLabel := widget.NewLabel("Select hash chunk size")
+	chunkLabel := widget.NewLabel("Select hash chunk size")
 	chunkEntry := widget.NewSelect(chunkSizeOptions, nil)
-    chunkEntry.SetSelectedIndex(0)
+	chunkEntry.SetSelectedIndex(0)
 
 	validateSig := widget.NewCheck("Validate PKG Signer", nil)
 	requireDistribution := widget.NewCheck("Require Distribution PKG", nil)
 
-    progress := widget.NewProgressBarInfinite()
+	progress := widget.NewProgressBarInfinite()
+	progressDialog := dialog.NewCustom(windowTitle, progressDialogText, progress, window)
+	progressDialog.Hide()
 
-    resultContainer := container.NewVBox(resultField)
-    resultScroll := container.NewScroll(resultContainer)
+	resultContainer := container.NewVBox(resultField)
+	resultScroll := container.NewScroll(resultContainer)
 
-    toggleProgress := func(running bool) {
-        if running {
-            resultContainer.Remove(resultField)
-            resultContainer.Add(progress)
-            progress.Show()
-            progress.Start()
-        } else {
-            progress.Stop()
-            resultContainer.Remove(progress)
-            resultContainer.Add(resultField)
-        }
-    }
+	toggleProgress := func(running bool) {
+		if running {
+			resultContainer.Hide()
+			progressDialog.Show()
+			progress.Show()
+			progress.Start()
+		} else {
+			progress.Stop()
+			progressDialog.Hide()
+			resultContainer.Show()
+		}
+	}
 
 	buildButton := makeBuildButton(urlEntry, chunkEntry, validateSig, requireDistribution, toggleProgress, copyBtn, result)
-    buildButton.Disable()
+	buildButton.Disable()
 
+	urlEntry.Validator = func(s string) (err error) {
+		defer func() {
+			if err != nil {
+				buildButton.Disable()
+				return
+			}
 
-    urlEntry.Validator = func(s string) (err error) {
-        defer func() {
-            if err != nil {
-                buildButton.Disable()
-                return
-            }
+			buildButton.Enable()
+		}()
 
-            buildButton.Enable()
-        }()
+		return validateURLString(s)
+	}
 
-        return validateURLString(s)
-    }
-    
-    resetButton := widget.NewButton("Reset", func() {
-        copyBtn.Disable()
-        urlEntry.SetText("")
-        result.Set(resultText)
-    })
+	resetButton := widget.NewButton("Reset", func() {
+		copyBtn.Disable()
+		urlEntry.SetText("")
+		result.Set(resultText)
+	})
 
-    optionsContainer := container.NewHBox(chunkLabel, chunkEntry, validateSig, requireDistribution)
+	optionsContainer := container.NewHBox(chunkLabel, chunkEntry, validateSig, requireDistribution)
 
-    footerURL, err := url.Parse(footerURI)
-    if err != nil {
-        // This is unexpected, but could happen
-        result.Set(err.Error())
-    }
-    footerLink := widget.NewHyperlink(footerText, footerURL)
+	footerURL, err := url.Parse(footerURI)
+	if err != nil {
+		// This is unexpected, but could happen
+		result.Set(err.Error())
+	}
+	footerLink := widget.NewHyperlink(footerText, footerURL)
 
-    headerContainer := container.NewVBox(label)
+	headerContainer := container.NewVBox(label)
 
-    buttonsContainer := container.NewHBox(layout.NewSpacer(), buildButton, layout.NewSpacer(), copyBtn, layout.NewSpacer(), resetButton, layout.NewSpacer())
+	buttonsContainer := container.NewHBox(layout.NewSpacer(), buildButton, layout.NewSpacer(), copyBtn, layout.NewSpacer(), resetButton, layout.NewSpacer())
 
-    entryContainer := container.NewVBox(urlEntry, layout.NewSpacer(), optionsContainer, layout.NewSpacer(), buttonsContainer)
+	entryContainer := container.NewVBox(urlEntry, layout.NewSpacer(), optionsContainer, layout.NewSpacer(), buttonsContainer)
 
-    footerContainer := container.NewVBox(footerLink)
-    footerContainer.Resize(fyne.NewSize(defaultWidth, footerHeight))
+	footerContainer := container.NewVBox(footerLink)
+	footerContainer.Resize(fyne.NewSize(defaultWidth, footerHeight))
 
-    topContainer := container.NewVBox(headerContainer, entryContainer)
+	topContainer := container.NewVBox(headerContainer, entryContainer)
 
 	mainContainer := container.NewBorder(topContainer, footerContainer, nil, nil, resultScroll)
-    window.Resize(fyne.NewSize(defaultWidth, defaultHeight))
+
+	aboutDialog := dialog.NewInformation("About", aboutText, window)
+	aboutItem := fyne.NewMenuItem("About", func() {
+		aboutDialog.Show()
+	})
+
+	aboutMenu := fyne.NewMenu("Help", aboutItem)
+	mainMenu := fyne.NewMainMenu(aboutMenu)
+	window.SetMainMenu(mainMenu)
+
+	window.Resize(fyne.NewSize(defaultWidth, defaultHeight))
 	window.SetContent(mainContainer)
+	window.SetMaster()
 	window.ShowAndRun()
 
 }
 
 func makeBuildButton(urlEntry *widget.Entry,
-    chunkEntry *widget.Select,
-    validateSig, requireDistribution *widget.Check,
-    progress func(bool),
-    copyBtn *widget.Button,
-    result binding.String) *widget.Button{
-    return widget.NewButton(buttonLabel, func() {
-        copyBtn.Disable()
-        progress(true)
-        defer progress(false)
+	chunkEntry *widget.Select,
+	validateSig, requireDistribution *widget.Check,
+	progress func(bool),
+	copyBtn *widget.Button,
+	result binding.String) *widget.Button {
+	return widget.NewButton(buttonLabel, func() {
+		copyBtn.Disable()
+		progress(true)
+		defer progress(false)
 
-        urlEntry.Disable()
-        defer urlEntry.Enable()
+		urlEntry.Disable()
+		defer urlEntry.Enable()
 
-        if valid := urlEntry.Validate(); valid != nil {
-            result.Set(valid.Error())
-            return
-        }
+		if valid := urlEntry.Validate(); valid != nil {
+			result.Set(valid.Error())
+			return
+		}
 
-        chunkSize := 50
-        if chunkEntry.Selected != noChunking && chunkEntry.Selected != ""{
-            var err error
-            chunkSize, err = strconv.Atoi(chunkEntry.Selected)
-            if err != nil {
-                result.Set(err.Error())
-                return
-            }
-        }
+		chunkSize := 50
+		if chunkEntry.Selected != noChunking && chunkEntry.Selected != "" {
+			var err error
+			chunkSize, err = strconv.Atoi(chunkEntry.Selected)
+			if err != nil {
+				result.Set(err.Error())
+				return
+			}
+		}
 
-        if chunkEntry.Selected == noChunking {
-            chunkSize = -1
-        }
+		hashChunkSize := int64(chunkSize) * mb
+		if chunkEntry.Selected == noChunking {
+			hashChunkSize = -1
+		}
 
-        if err := build(urlEntry.Text, int64(chunkSize) * mb, validateSig.Checked, requireDistribution.Checked, result); err != nil {
-            result.Set(err.Error())
-            return
-        }
+		if err := build(urlEntry.Text, hashChunkSize, validateSig.Checked, requireDistribution.Checked, result); err != nil {
+			result.Set(err.Error())
+			return
+		}
 
-        copyBtn.Enable()
-        urlEntry.SetText("")
-    })
+		copyBtn.Enable()
+		urlEntry.SetText("")
+	})
 }
 
 func build(pkgUrl string, chunkSize int64, validSig, distPkg bool, result binding.String) error {
-	if chunkSize == 0 {
-		chunkSize = mb * 50
-	}
-
-    result.Set("Waiting on pkg read...")
-
 	reader, err := httpio.NewReadAtCloser(
 		httpio.WithClient(&http.Client{}),
 		httpio.WithURL(pkgUrl),
@@ -203,6 +216,10 @@ func build(pkgUrl string, chunkSize int64, validSig, distPkg bool, result bindin
 	)
 	if err != nil {
 		return err
+	}
+
+	if chunkSize < 0 {
+		chunkSize = reader.Length()
 	}
 
 	p := manifestgo.NewPackage(reader, sha256.Size, chunkSize)
@@ -236,26 +253,26 @@ func build(pkgUrl string, chunkSize int64, validSig, distPkg bool, result bindin
 }
 
 func validateURLString(s string) error {
-    if len(s) < len("https://.pkg") {
-        return errors.New("invalid url")
-    }
+	if len(s) < len("https://.pkg") {
+		return errors.New("invalid url")
+	}
 
-    u, err := url.Parse(s)
-    if err != nil {
-        return err
-    }
+	u, err := url.Parse(s)
+	if err != nil {
+		return err
+	}
 
-    if u.Scheme != "https" {
-        return errors.New("invalid url scheme")
-    }
+	if u.Scheme != "https" {
+		return errors.New("invalid url scheme")
+	}
 
-    if !u.IsAbs()  {
-        return errors.New("not an absolute url")
-    }
+	if !u.IsAbs() {
+		return errors.New("not an absolute url")
+	}
 
-    if !strings.HasSuffix(strings.ToLower(s), ".pkg") {
-        return errors.New("url does not resolve to a pkg file")
-    }
+	if !strings.HasSuffix(strings.ToLower(s), ".pkg") {
+		return errors.New("url does not resolve to a pkg file")
+	}
 
-    return nil
+	return nil
 }

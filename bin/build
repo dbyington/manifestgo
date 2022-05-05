@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+cd app || exit
+GOOS=darwin GOARCH=amd64 go build -o ManifestBuilder_amd64 || exit
+GOOS=darwin GOARCH=arm64 go build -o ManifestBuilder_arm64 || exit
+lipo -create -output ManifestBuilder_universal ManifestBuilder_amd64 ManifestBuilder_arm64 || exit
