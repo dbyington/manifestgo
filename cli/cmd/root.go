@@ -30,15 +30,14 @@ import (
     "github.com/dbyington/manifestgo"
 )
 
-const hundredMB =  100 * (1 << 20)
-
+const mb = 1 << 20
 
 var (
-    chunkSize   int64
-    pkgFile     string
-    pkgUrl      string
-    plistOutput bool
-    validSig    bool
+    chunkSize         int64
+    pkgFile           string
+    pkgUrl            string
+    plistOutput       bool
+    validSig, distPkg bool
 )
 
 var ErrPkgNotExist = os.ErrNotExist
@@ -66,13 +65,15 @@ to quickly create a Cobra application.`,
             if _, err = os.Stat(pkgFile); err != nil{
                 if os.IsNotExist(err) {
                     return ErrPkgNotExist
+                } else {
+                    cmd.Printf("os stat returned an error: %s\n", err)
+                    return err
                 }
-            } else {
-                return err
             }
 
             p, err = manifestgo.ReadPkgFile(pkgFile)
             if err != nil {
+                cmd.Printf("read pkg file returned an error: %s\n", err)
                 return err
             }
             p.URL = "NONE"
@@ -95,13 +96,15 @@ to quickly create a Cobra application.`,
                 return err
             }
         } else {
-            fmt.Println("NO PACKAGE!")
             return ErrPkgNotExist
         }
 
-
         if validSig && !p.HasValidSignature() {
             return errors.New("package does not have a valid signature")
+        }
+
+        if distPkg && !p.IsDistribution() {
+            return errors.New("package is not a distribution")
         }
 
         m, err = p.BuildManifest()
@@ -125,9 +128,10 @@ func Execute() {
 }
 
 func init() {
-    rootCmd.PersistentFlags().Int64Var(&chunkSize, "chunksize", hundredMB, "checksum chunk size")
+    rootCmd.PersistentFlags().Int64Var(&chunkSize, "chunksize", 100, "checksum chunk size in MB")
     rootCmd.PersistentFlags().StringVar(&pkgFile, "pkg", "", "pkg file")
     rootCmd.PersistentFlags().StringVar(&pkgUrl, "url", "", "pkg url")
+    rootCmd.PersistentFlags().BoolVar(&distPkg, "distribution", true, "distribution, require pkg be a distributions package")
     rootCmd.PersistentFlags().BoolVar(&plistOutput, "plistOutput", false, "plistOutput, dump the result as a plistOutput file")
     rootCmd.PersistentFlags().BoolVar(&validSig, "validSignature", true, "validSignature, require the pkg to have been signed with a valid certificate")
 }

@@ -76,6 +76,9 @@ type Package struct {
 	hashType      uint
 	reader        PackageReader
 	source        sourceFile
+
+	pkgType xar.PkgType
+	sigErr  error
 }
 
 type PackageReader interface {
@@ -109,6 +112,14 @@ func (p *Package) GetBundleIdentifier() string {
 	}
 
 	return id
+}
+
+func (p *Package) IsDistribution() bool {
+	return p.pkgType == xar.PkgTypeDistribution
+}
+
+func (p *Package) SignatureError() error {
+	return p.sigErr
 }
 
 func (p *Package) getPrimaryPkgRef() PkgRef {
@@ -382,6 +393,7 @@ func (p *Package) fill(r *xar.Reader) error {
 
 	p.hasSignature = r.HasSignature()
 	p.signatureValid = r.ValidSignature()
-
+	p.pkgType = r.PackageType()
+	p.sigErr = r.SignatureError
 	return nil
 }

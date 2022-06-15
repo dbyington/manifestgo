@@ -129,6 +129,10 @@ type ReaderAtCloser interface {
 	// io.Closer
 }
 
+type PkgType string
+
+const PkgTypeDistribution PkgType = "Distribution"
+
 type Reader struct {
 	File map[uint64]*File
 
@@ -141,6 +145,8 @@ type Reader struct {
 	size       int64
 	heapOffset int64
 	hash       hash.Hash
+
+	packageType PkgType
 }
 
 // OpenReader will open the XAR file specified by name and return a Reader.
@@ -264,6 +270,10 @@ func NewReader(r ReaderAtCloser, size int64) (*Reader, error) {
 			if err != nil {
 				return nil, err
 			}
+
+			if xmlFile.Name == string(PkgTypeDistribution) {
+				xr.packageType = PkgTypeDistribution
+			}
 		}
 	}
 
@@ -382,6 +392,10 @@ func (r *Reader) HasSignature() bool {
 // cause.
 func (r *Reader) ValidSignature() bool {
 	return r.HasSignature() && r.SignatureError == nil
+}
+
+func (r *Reader) PackageType() PkgType {
+	return r.packageType
 }
 
 func xmlFileToFileInfo(xmlFile *xmlFile) (fi FileInfo, err error) {
